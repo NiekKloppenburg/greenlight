@@ -17,23 +17,23 @@ func (r Runtime) MarshalJSON() ([]byte, error) {
 }
 
 func (r *Runtime) UnmarshalJSON(jsonValue []byte) error {
-    unquotedJSONValue, err := strconv.Unquote(string(jsonValue))
-    if err != nil {
-        return ErrInvalidRuntimeFormat
-    }
+	unquotedJSONValue, err := strconv.Unquote(string(jsonValue))
+	if err != nil {
+		return ErrInvalidRuntimeFormat
+	}
 
-    parts := strings.Split(unquotedJSONValue, " ")
+	parts := strings.Split(unquotedJSONValue, " ")
 
-    if len(parts) != 2 || parts[1] != "mins" {
-        return ErrInvalidRuntimeFormat
-    }
+	if len(parts) != 2 || parts[1] != "mins" {
+		return ErrInvalidRuntimeFormat
+	}
 
-    i, err := strconv.ParseInt(parts[0], 10, 32)
-    if err != nil {
-        return ErrInvalidRuntimeFormat
-    }
+	i, err := strconv.ParseInt(parts[0], 10, 32)
+	if err != nil {
+		return ErrInvalidRuntimeFormat
+	}
 
-    *r = Runtime(i)
+	*r = Runtime(i)
 
-    return nil
+	return nil
 }
