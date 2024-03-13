@@ -28,9 +28,8 @@ type User struct {
 }
 
 func (u *User) IsAnonymous() bool {
-    return u == AnonymousUser
+	return u == AnonymousUser
 }
-
 
 type password struct {
 	plaintext *string
@@ -181,9 +180,9 @@ func (m UserModel) Update(user *User) error {
 }
 
 func (m UserModel) GetForToken(tokenScope, tokenPlaintext string) (*User, error) {
-    tokenHash := sha256.Sum256([]byte(tokenPlaintext))
+	tokenHash := sha256.Sum256([]byte(tokenPlaintext))
 
-    query := `
+	query := `
         SELECT users.id, users.created_at, users.name, users.email, users.password_hash, users.activated, users.version
         FROM users
         INNER JOIN tokens
@@ -192,30 +191,30 @@ func (m UserModel) GetForToken(tokenScope, tokenPlaintext string) (*User, error)
         AND tokens.scope = $2 
         AND tokens.expiry > $3`
 
-    args := []any{tokenHash[:], tokenScope, time.Now()}
+	args := []any{tokenHash[:], tokenScope, time.Now()}
 
-    var user User
+	var user User
 
-    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
-    err := m.DB.QueryRowContext(ctx, query, args...).Scan(
-        &user.ID,
-        &user.CreatedAt,
-        &user.Name,
-        &user.Email,
-        &user.Password.hash,
-        &user.Activated,
-        &user.Version,
-    )
-    if err != nil {
-        switch {
-        case errors.Is(err, sql.ErrNoRows):
-            return nil, ErrRecordNotFound
-        default:
-            return nil, err
-        }
-    }
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(
+		&user.ID,
+		&user.CreatedAt,
+		&user.Name,
+		&user.Email,
+		&user.Password.hash,
+		&user.Activated,
+		&user.Version,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
 
-    return &user, nil
+	return &user, nil
 }

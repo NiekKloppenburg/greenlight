@@ -4,7 +4,6 @@ import (
 	"errors"
 	"expvar"
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/NiekKloppenburg/greenlight/internal/data"
 	"github.com/NiekKloppenburg/greenlight/internal/validator"
 
+	"github.com/tomasen/realip"
 	"golang.org/x/time/rate"
 )
 
@@ -59,11 +59,7 @@ func (app *application) rateLimit(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if app.config.limiter.enabled {
-			ip, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				app.serverErrorResponse(w, r, err)
-				return
-			}
+			ip := realip.FromRequest(r)
 
 			mu.Lock()
 
@@ -87,187 +83,186 @@ func (app *application) rateLimit(next http.Handler) http.Handler {
 }
 
 func (app *application) authenticate(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Add("Vary", "Authorization")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Authorization")
 
-        authorizationHeader := r.Header.Get("Authorization")
+		authorizationHeader := r.Header.Get("Authorization")
 
-        if authorizationHeader == "" {
-            r = app.contextSetUser(r, data.AnonymousUser)
-            next.ServeHTTP(w, r)
-            return
-        }
+		if authorizationHeader == "" {
+			r = app.contextSetUser(r, data.AnonymousUser)
+			next.ServeHTTP(w, r)
+			return
+		}
 
-        headerParts := strings.Split(authorizationHeader, " ")
-        if len(headerParts) != 2 || headerParts[0] != "Bearer" {
-            app.invalidAuthenticationTokenResponse(w, r)
-            return
-        }
+		headerParts := strings.Split(authorizationHeader, " ")
+		if len(headerParts) != 2 || headerParts[0] != "Bearer" {
+			app.invalidAuthenticationTokenResponse(w, r)
+			return
+		}
 
-        token := headerParts[1]
+		token := headerParts[1]
 
-        v := validator.New()
+		v := validator.New()
 
-        if data.ValidateTokenPlaintext(v, token); !v.Valid() {
-            app.invalidAuthenticationTokenResponse(w, r)
-            return
-        }
+		if data.ValidateTokenPlaintext(v, token); !v.Valid() {
+			app.invalidAuthenticationTokenResponse(w, r)
+			return
+		}
 
-        user, err := app.models.Users.GetForToken(data.ScopeAuthentication, token)
-        if err != nil {
-            switch {
-            case errors.Is(err, data.ErrRecordNotFound):
-                app.invalidAuthenticationTokenResponse(w, r)
-            default:
-                app.serverErrorResponse(w, r, err)
-            }
-            return
-        }
+		user, err := app.models.Users.GetForToken(data.ScopeAuthentication, token)
+		if err != nil {
+			switch {
+			case errors.Is(err, data.ErrRecordNotFound):
+				app.invalidAuthenticationTokenResponse(w, r)
+			default:
+				app.serverErrorResponse(w, r, err)
+			}
+			return
+		}
 
-        r = app.contextSetUser(r, user)
+		r = app.contextSetUser(r, user)
 
-        next.ServeHTTP(w, r)
-    })
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (app *application) requireAuthenticatedUser(next http.HandlerFunc) http.HandlerFunc {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        user := app.contextGetUser(r)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := app.contextGetUser(r)
 
-        if user.IsAnonymous() {
-            app.authenticationRequiredResponse(w, r)
-            return
-        }
+		if user.IsAnonymous() {
+			app.authenticationRequiredResponse(w, r)
+			return
+		}
 
-        next.ServeHTTP(w, r)
-    })
+		next.ServeHTTP(w, r)
+	})
 }
 
-
 func (app *application) requireActivatedUser(next http.HandlerFunc) http.HandlerFunc {
-    fn := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        user := app.contextGetUser(r)
+	fn := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := app.contextGetUser(r)
 
-        // Check that a user is activated.
-        if !user.Activated {
-            app.inactiveAccountResponse(w, r)
-            return
-        }
+		// Check that a user is activated.
+		if !user.Activated {
+			app.inactiveAccountResponse(w, r)
+			return
+		}
 
-        next.ServeHTTP(w, r)
-    })
+		next.ServeHTTP(w, r)
+	})
 
-    // Wrap fn with the requireAuthenticatedUser() middleware before returning it.
-    return app.requireAuthenticatedUser(fn)
+	// Wrap fn with the requireAuthenticatedUser() middleware before returning it.
+	return app.requireAuthenticatedUser(fn)
 }
 
 func (app *application) requirePermission(code string, next http.HandlerFunc) http.HandlerFunc {
-    fn := func(w http.ResponseWriter, r *http.Request) {
-        user := app.contextGetUser(r)
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		user := app.contextGetUser(r)
 
-        permissions, err := app.models.Permissions.GetAllForUser(user.ID)
-        if err != nil {
-            app.serverErrorResponse(w, r, err)
-            return
-        }
+		permissions, err := app.models.Permissions.GetAllForUser(user.ID)
+		if err != nil {
+			app.serverErrorResponse(w, r, err)
+			return
+		}
 
-        if !permissions.Include(code) {
-            app.notPermittedResponse(w, r)
-            return
-        }
+		if !permissions.Include(code) {
+			app.notPermittedResponse(w, r)
+			return
+		}
 
-        next.ServeHTTP(w, r)
-    }
+		next.ServeHTTP(w, r)
+	}
 
-    return app.requireActivatedUser(fn)
+	return app.requireActivatedUser(fn)
 }
 
 func (app *application) enableCORS(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Add("Vary", "Origin")
-        w.Header().Add("Vary", "Access-Control-Request-Method")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Origin")
+		w.Header().Add("Vary", "Access-Control-Request-Method")
 
-        origin := r.Header.Get("Origin")
+		origin := r.Header.Get("Origin")
 
-        if origin != "" {
-            for i := range app.config.cors.trustedOrigins {
-                if origin == app.config.cors.trustedOrigins[i] {
-                    w.Header().Set("Access-Control-Allow-Origin", origin)
+		if origin != "" {
+			for i := range app.config.cors.trustedOrigins {
+				if origin == app.config.cors.trustedOrigins[i] {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
 
-                    if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
-                        w.Header().Set("Access-Control-Allow-Methods", "OPTIONS, PUT, PATCH, DELETE")
-                        w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+					if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+						w.Header().Set("Access-Control-Allow-Methods", "OPTIONS, PUT, PATCH, DELETE")
+						w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 
-                        w.WriteHeader(http.StatusOK)
-                        return
-                    }
+						w.WriteHeader(http.StatusOK)
+						return
+					}
 
-                    break
-                }
-            }
-        }
+					break
+				}
+			}
+		}
 
-        next.ServeHTTP(w, r)
-    })
+		next.ServeHTTP(w, r)
+	})
 }
 
 type metricsResponseWriter struct {
-    wrapped       http.ResponseWriter
-    statusCode    int
-    headerWritten bool
+	wrapped       http.ResponseWriter
+	statusCode    int
+	headerWritten bool
 }
 
 func newMetricsResponseWriter(w http.ResponseWriter) *metricsResponseWriter {
-    return &metricsResponseWriter{
-        wrapped:    w,
-        statusCode: http.StatusOK,
-    }
+	return &metricsResponseWriter{
+		wrapped:    w,
+		statusCode: http.StatusOK,
+	}
 }
 
 func (mw *metricsResponseWriter) Header() http.Header {
-    return mw.wrapped.Header()
+	return mw.wrapped.Header()
 }
 
 func (mw *metricsResponseWriter) WriteHeader(statusCode int) {
-    mw.wrapped.WriteHeader(statusCode)
+	mw.wrapped.WriteHeader(statusCode)
 
-    if !mw.headerWritten {
-        mw.statusCode = statusCode
-        mw.headerWritten = true
-    }
+	if !mw.headerWritten {
+		mw.statusCode = statusCode
+		mw.headerWritten = true
+	}
 }
 
 func (mw *metricsResponseWriter) Write(b []byte) (int, error) {
-    mw.headerWritten = true
-    return mw.wrapped.Write(b)
+	mw.headerWritten = true
+	return mw.wrapped.Write(b)
 }
 
 func (mw *metricsResponseWriter) Unwrap() http.ResponseWriter {
-    return mw.wrapped
+	return mw.wrapped
 }
 
 func (app *application) metrics(next http.Handler) http.Handler {
-    var (
-        totalRequestsReceived           = expvar.NewInt("total_requests_received")
-        totalResponsesSent              = expvar.NewInt("total_responses_sent")
-        totalProcessingTimeMicroseconds = expvar.NewInt("total_processing_time_μs")
-        totalResponsesSentByStatus      = expvar.NewMap("total_responses_sent_by_status")
-    )
+	var (
+		totalRequestsReceived           = expvar.NewInt("total_requests_received")
+		totalResponsesSent              = expvar.NewInt("total_responses_sent")
+		totalProcessingTimeMicroseconds = expvar.NewInt("total_processing_time_μs")
+		totalResponsesSentByStatus      = expvar.NewMap("total_responses_sent_by_status")
+	)
 
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        start := time.Now()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 
-        totalRequestsReceived.Add(1)
+		totalRequestsReceived.Add(1)
 
-        mw := newMetricsResponseWriter(w)
-        
-        next.ServeHTTP(mw, r)
+		mw := newMetricsResponseWriter(w)
 
-        totalResponsesSent.Add(1)
+		next.ServeHTTP(mw, r)
 
-        totalResponsesSentByStatus.Add(strconv.Itoa(mw.statusCode), 1)
+		totalResponsesSent.Add(1)
 
-        duration := time.Since(start).Microseconds()
-        totalProcessingTimeMicroseconds.Add(duration)
-    })
+		totalResponsesSentByStatus.Add(strconv.Itoa(mw.statusCode), 1)
+
+		duration := time.Since(start).Microseconds()
+		totalProcessingTimeMicroseconds.Add(duration)
+	})
 }
