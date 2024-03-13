@@ -15,11 +15,14 @@ import (
 
 	"github.com/NiekKloppenburg/greenlight/internal/data"
 	"github.com/NiekKloppenburg/greenlight/internal/mailer"
+	"github.com/NiekKloppenburg/greenlight/internal/vcs"
 
 	_ "github.com/lib/pq"
 )
 
-const version = "1.0.0"
+var (
+	version = vcs.Version()
+)
 
 type config struct {
 	port int
